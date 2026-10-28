@@ -39,15 +39,19 @@ def with_dock(fn):
     return {"ok": ok, "log": "".join(line + "\n" for line in lines)}
 
 
+def slot_of(v):
+    if not 0 <= (n := int(v)) < send.SLOTS:
+        raise ValueError(f"slot entre 0 et {send.SLOTS - 1}")
+    return n
+
+
 def status(q, body):
     return {"reachable": on_dock_network(), "ssid": WIFI_SSID, "password": WIFI_PASSWORD, "host": DOCK[0], "slots": send.SLOTS}
 
 
 def image(q, body):
     """Corps = image 480x320 préparée par la page. slot=N, mode=fixed|loop (commande de mode avant), quality."""
-    slot, mode = int(q.get("slot", 0)), q.get("mode")
-    if not 0 <= slot < send.SLOTS:
-        raise ValueError(f"slot entre 0 et {send.SLOTS - 1}")
+    slot, mode = slot_of(q.get("slot", 0)), q.get("mode")
     jpeg = send.to_jpeg(io.BytesIO(body), "stretch", quality=int(q.get("quality", 90)))
     r = with_dock(lambda d: (not mode or d.mode(mode)) and d.send(jpeg, slot))
     return {**r, "jpeg": base64.b64encode(jpeg).decode()}
@@ -61,7 +65,8 @@ def mode(q, body):
 
 
 def clear(q, body):
-    slots = range(send.SLOTS) if q.get("slot", "all") == "all" else [int(q["slot"])]
+    """slot=N ou liste N,M,… : vide ces slots."""
+    slots = [slot_of(v) for v in q["slot"].split(",")]
     return with_dock(lambda d: all([d.clear(n) for n in slots]))
 
 

@@ -112,6 +112,9 @@
   input[type=color] { width: 44px; height: 30px; padding: 2px; border: 2px solid var(--ink); background: var(--paper); }
   select { border: 2px solid var(--ink); background: var(--paper); padding: 3px 6px; border-radius: 0; box-shadow: 2px 2px 0 var(--ink); }
   .hint { font-size: 12px; color: #444; margin: 8px 0 0; }
+  .row .hint { margin: 0; }
+  .mt { margin-top: 10px; }
+  .mb { margin-bottom: 14px; }
 
   /* Album : 9 emplacements */
   .album { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -203,8 +206,8 @@
         <div class="ctl"><label for="contrast">Contraste</label><input type="range" id="contrast" min="30" max="200" value="100"><output id="contrastV">100 %</output></div>
         <div class="ctl"><label for="sat">Saturation</label><input type="range" id="sat" min="0" max="200" value="100"><output id="satV">100 %</output></div>
         <div class="ctl"><label for="quality">Qualité JPEG</label><input type="range" id="quality" min="40" max="95" value="90"><output id="qualityV">90</output></div>
-        <div class="row" style="margin-top:10px"><label for="bg">Fond</label><input type="color" id="bg" value="#000000">
-          <span class="hint" style="margin:0">visible dans les bandes (Ajuster), en dézoomant ou sous la transparence — pas en Remplir</span></div>
+        <div class="row mt"><label for="bg">Fond</label><input type="color" id="bg" value="#000000">
+          <span class="hint">visible dans les bandes (Ajuster), en dézoomant ou sous la transparence — pas en Remplir</span></div>
         <p class="hint">Sur l'écran : glisser pour déplacer · molette pour zoomer · double-clic pour recentrer</p>
         <div class="sep"></div>
         <div class="row">
@@ -220,11 +223,15 @@
     <div class="win">
       <div class="title"><i class="close"></i><span>Album — 9 emplacements</span></div>
       <div class="body">
-        <div class="row" style="margin-bottom:14px">
+        <div class="row mb">
           <span>Mode du dock</span>
           <button class="btn" data-mode="fixed" title="Affiche en continu l'emplacement 1">Image fixe</button>
           <button class="btn" data-mode="loop" title="Fait défiler les emplacements remplis">Diaporama</button>
-          <span class="hint" style="margin:0" id="modeHint"></span>
+          <span class="hint" id="modeHint"></span>
+        </div>
+        <div class="row mb">
+          <button class="btn" id="syncAll" title="Renvoie le mode et chaque emplacement rempli, vide sur le dock les emplacements vides ici">Tout renvoyer au dock</button>
+          <span class="hint">remet le dock exactement comme cet album (les emplacements vides ici sont vidés sur le dock)</span>
         </div>
         <div class="album" id="album"></div>
         <p class="hint">Clic : choisir l'emplacement · « Éditer » : reprendre la retouche · glisser une image dessus : l'ouvrir pour cet
@@ -258,7 +265,7 @@ const originals = (() => {
     } catch { return undefined; }
   };
   return { get: k => tx("readonly", s => s.get(k)), set: (k, v) => tx("readwrite", s => s.put(v, k)),
-           del: k => tx("readwrite", s => s.delete(k)), clear: () => tx("readwrite", s => s.clear()) };
+           del: k => tx("readwrite", s => s.delete(k)) };
 })();
 
 let SLOTS = 9, slots = store.get("slots", {}), target = 0;   // slots[i] = { img: vignette JPEG, name, st }
@@ -374,10 +381,15 @@ async function openImage(file, slot) {
   try { await load(file, file.name, FRESH()); if (slot !== undefined) selectSlot(slot); }
   catch (e) { toast(`${file.name} : ${e.message}`, true); }
 }
-async function editSlot(i) {
+// Original + réglages d'un emplacement ; sans original stocké (ancien envoi), on repart de la vignette 480×320.
+async function slotSource(i) {
   const s = slots[i];
-  try {   // sans original stocké (ancien envoi), on retouche la vignette 480×320
-    await load(await originals.get(i) ?? await (await fetch(s.img)).blob(), s.name, { ...FRESH(), fit: "contain", ...s.st, ...s.adj });
+  return { blob: await originals.get(i) ?? await (await fetch(s.img)).blob(), st: { ...FRESH(), fit: "contain", ...s.st, ...s.adj } };
+}
+async function editSlot(i) {
+  try {
+    const { blob, st } = await slotSource(i);
+    await load(blob, slots[i].name, st);
     selectSlot(i); toast(`Emplacement ${i + 1} dans l'éditeur`);
   } catch (e) { toast(`Emplacement ${i + 1} : ${e.message}`, true); }
 }
@@ -413,16 +425,21 @@ $("quality").value = store.get("quality", 90);
 $("quality").oninput = () => { store.set("quality", $("quality").value); render(); };
 
 /* ---------- Envoi ---------- */
-async function upload(slot, canvas, label, mode, original, state) {
-  const png = await new Promise(r => canvas.toBlob(r, "image/png"));   // sans perte : le serveur encode le JPEG une seule fois
+// Rend `bmp` avec `state` en 480×320, l'envoie dans `slot` (précédé de la commande `mode` si donnée) et mémorise
+// vignette, réglages et original pour pouvoir reprendre la retouche.
+const OFF = Object.assign(document.createElement("canvas"), { width: W, height: H });
+async function upload(slot, bmp, original, state, label, mode = "") {
+  draw(OFF, bmp, state);
+  const png = await new Promise(r => OFF.toBlob(r, "image/png"));   // sans perte : le serveur encode le JPEG une seule fois
   const j = await api("/api/image", { slot, mode, quality: $("quality").value }, png);
   slots[slot] = { img: "data:image/jpeg;base64," + j.jpeg, name: label, st: { ...state } };
   store.set("slots", slots);
   await originals.set(slot, original);
   if (!j.ok) throw new Error(`emplacement ${slot + 1} : le dock n'a pas tout acquitté`);
+  if (mode) setMode(mode);
 }
-$("sendSlot").onclick = () => run(`Emplacement ${target + 1} envoyé`, () => upload(target, cv, name, "", src, st));
-$("sendFixed").onclick = () => run("Image fixe affichée", async () => { await upload(0, cv, name, "fixed", src, st); setMode("fixed"); });
+$("sendSlot").onclick = () => run(`Emplacement ${target + 1} envoyé`, () => upload(target, img, src, st, name));
+$("sendFixed").onclick = () => run("Image fixe affichée", () => upload(0, img, src, st, name, "fixed"));
 
 // Mode du dock : illisible sur le dock, on affiche le dernier mode envoyé depuis ce navigateur.
 let dockMode = store.get("mode", null);
@@ -440,25 +457,30 @@ document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () =>
 $("mOpen").onclick = () => pick(f => openImage(f));
 $("mLoop").onclick = () => pick(files => run(`Diaporama de ${Math.min(files.length, SLOTS)} image(s) envoyé`, async () => {
   if (files.length > SLOTS) toast(`${files.length} images : seules les ${SLOTS} premières sont envoyées`);
-  const c = document.createElement("canvas"); c.width = W; c.height = H;
   const s = { ...st, zoom: 1, dx: 0, dy: 0, rot: 0, flip: false };   // cadrage et réglages de l'éditeur, sans zoom ni déplacement
-  for (const [i, f] of files.slice(0, SLOTS).entries()) {
-    draw(c, await decode(f), s);
-    await upload(i, c, f.name, i ? "" : "loop", f, s);
-    setMode("loop");
-  }
+  for (const [i, f] of files.slice(0, SLOTS).entries()) await upload(i, await decode(f), f, s, f.name, i ? "" : "loop");
 }), true);
 
-async function clear(slot) {
-  const all = slot === undefined;
-  await run(all ? "Tous les emplacements vidés" : `Emplacement ${slot + 1} vidé`, async () => {
-    const j = await api("/api/clear", { slot: all ? "all" : slot });
-    if (!j.ok) throw new Error("le dock n'a pas acquitté la suppression");
-    if (all) { slots = {}; await originals.clear(); } else { delete slots[slot]; await originals.del(slot); }
-    store.set("slots", slots);
-  });
+const allSlots = () => [...Array(SLOTS).keys()];
+async function clearSlots(list) {
+  if (!list.length) return;
+  if (!(await api("/api/clear", { slot: list.join(",") })).ok) throw new Error("le dock n'a pas acquitté la suppression");
+  for (const i of list) { delete slots[i]; await originals.del(i); }
+  store.set("slots", slots);
 }
-$("mClearAll").onclick = () => clear();
+const clear = slot => run(`Emplacement ${slot + 1} vidé`, () => clearSlots([slot]));
+$("mClearAll").onclick = () => run("Tous les emplacements vidés", () => clearSlots(allSlots()));
+
+// Remet le dock comme l'album : mode, puis chaque emplacement rempli (depuis l'original), puis vide les autres.
+$("syncAll").onclick = () => run("Dock synchronisé avec l'album", async () => {
+  const full = allSlots().filter(i => slots[i]);
+  const mode = dockMode ?? (full.length > 1 ? "loop" : "fixed");
+  for (const [k, i] of full.entries()) {
+    const { blob, st } = await slotSource(i);
+    await upload(i, await decode(blob), blob, st, slots[i].name, k ? "" : mode);
+  }
+  await clearSlots(allSlots().filter(i => !slots[i]));
+});
 
 /* ---------- Album ---------- */
 function selectSlot(i) { target = i; renderAlbum(); render(); }

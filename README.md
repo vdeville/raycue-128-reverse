@@ -50,9 +50,25 @@ fait l'envoi ; pour les envois antérieurs à cette fonction, seule la vignette
 **Diaporama**, sans renvoyer d'image. Le dock ne permet pas de lire son mode :
 les boutons montrent le dernier mode envoyé depuis ce navigateur.
 
+**Tout renvoyer au dock** (fenêtre Album) : remet le dock exactement comme
+l'album — commande de mode (celle affichée, sinon diaporama s'il y a plusieurs
+images), chaque emplacement rempli re-rendu depuis son original et ses réglages,
+puis suppression sur le dock des emplacements vides dans l'album. Pratique après
+un reset du dock ou des envois faits ailleurs (qui seront écrasés).
+
 **Autres actions** : **Diaporama…** (9 images max, mêmes réglages que
 l'éditeur), **×** pour vider un emplacement, **Tout effacer**, **Journal** des
 échanges sous l'écran. Mise en page adaptée au mobile.
+
+**API locale** (servie par `gui/app.py`, utilisable depuis un script) :
+
+| Route | Rôle |
+|---|---|
+| `GET /api/status` | `reachable` (adresse sur le réseau du dock), SSID, mot de passe, nombre de slots |
+| `POST /api/image?slot=N&mode=fixed\|loop&quality=Q` | corps = image (idéalement 480×320) ; commande de mode facultative puis envoi dans le slot ; renvoie `ok`, `log` et le JPEG envoyé (base64) |
+| `POST /api/mode?mode=fixed\|loop` | bascule seulement le mode |
+| `POST /api/clear?slot=N[,M…]` | vide un ou plusieurs slots |
+| `POST /api/decode` | corps = image (HEIC, TIFF…) → PNG lisible par le navigateur |
 
 **État du dock** (en haut à droite) :
 - 🔴 *injoignable* : pas d'adresse sur le réseau du dock, ou dernier envoi non
