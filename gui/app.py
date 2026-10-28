@@ -53,6 +53,13 @@ def image(q, body):
     return {**r, "jpeg": base64.b64encode(jpeg).decode()}
 
 
+def mode(q, body):
+    """Bascule seulement le mode du dock (commande 50/51), sans renvoyer d'image."""
+    if (m := q.get("mode")) not in ("fixed", "loop"):
+        raise ValueError("mode = fixed ou loop")
+    return with_dock(lambda d: d.mode(m))
+
+
 def clear(q, body):
     slots = range(send.SLOTS) if q.get("slot", "all") == "all" else [int(q["slot"])]
     return with_dock(lambda d: all([d.clear(n) for n in slots]))
@@ -68,7 +75,7 @@ def decode(q, body):
 
 
 ROUTES = {("GET", "/api/status"): status, ("POST", "/api/image"): image,
-          ("POST", "/api/clear"): clear, ("POST", "/api/decode"): decode}
+          ("POST", "/api/mode"): mode, ("POST", "/api/clear"): clear, ("POST", "/api/decode"): decode}
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -220,6 +220,12 @@
     <div class="win">
       <div class="title"><i class="close"></i><span>Album — 9 emplacements</span></div>
       <div class="body">
+        <div class="row" style="margin-bottom:14px">
+          <span>Mode du dock</span>
+          <button class="btn" data-mode="fixed" title="Affiche en continu l'emplacement 1">Image fixe</button>
+          <button class="btn" data-mode="loop" title="Fait défiler les emplacements remplis">Diaporama</button>
+          <span class="hint" style="margin:0" id="modeHint"></span>
+        </div>
         <div class="album" id="album"></div>
         <p class="hint">Clic : choisir l'emplacement · « Éditer » : reprendre la retouche · glisser une image dessus : l'ouvrir pour cet
           emplacement. Le dock ne permet pas de relire ses images : l'album montre ce qui a été envoyé depuis ce navigateur.</p>
@@ -416,7 +422,20 @@ async function upload(slot, canvas, label, mode, original, state) {
   if (!j.ok) throw new Error(`emplacement ${slot + 1} : le dock n'a pas tout acquitté`);
 }
 $("sendSlot").onclick = () => run(`Emplacement ${target + 1} envoyé`, () => upload(target, cv, name, "", src, st));
-$("sendFixed").onclick = () => run("Image fixe affichée", () => upload(0, cv, name, "fixed", src, st));
+$("sendFixed").onclick = () => run("Image fixe affichée", async () => { await upload(0, cv, name, "fixed", src, st); setMode("fixed"); });
+
+// Mode du dock : illisible sur le dock, on affiche le dernier mode envoyé depuis ce navigateur.
+let dockMode = store.get("mode", null);
+function setMode(m) { dockMode = m; store.set("mode", m); }
+function renderMode() {
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === dockMode));
+  $("modeHint").textContent = dockMode ? "dernier mode envoyé depuis ce navigateur" : "mode actuel inconnu";
+}
+document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () =>
+  run(b.dataset.mode === "loop" ? "Dock en diaporama" : "Dock en image fixe (emplacement 1)", async () => {
+    if (!(await api("/api/mode", { mode: b.dataset.mode })).ok) throw new Error("le dock n'a pas acquitté le changement de mode");
+    setMode(b.dataset.mode);
+  }));
 
 $("mOpen").onclick = () => pick(f => openImage(f));
 $("mLoop").onclick = () => pick(files => run(`Diaporama de ${Math.min(files.length, SLOTS)} image(s) envoyé`, async () => {
@@ -426,6 +445,7 @@ $("mLoop").onclick = () => pick(files => run(`Diaporama de ${Math.min(files.leng
   for (const [i, f] of files.slice(0, SLOTS).entries()) {
     draw(c, await decode(f), s);
     await upload(i, c, f.name, i ? "" : "loop", f, s);
+    setMode("loop");
   }
 }), true);
 
@@ -445,6 +465,7 @@ function selectSlot(i) { target = i; renderAlbum(); render(); }
 function renderAlbum() {
   $("target").innerHTML = Array.from({ length: SLOTS }, (_, i) => `<option value="${i}">${i + 1}</option>`).join("");
   $("target").value = target;
+  renderMode();
   $("album").replaceChildren(...Array.from({ length: SLOTS }, (_, i) => {
     const s = slots[i], el = document.createElement("button");
     el.className = "slot" + (i === target ? " sel" : "");

@@ -46,6 +46,10 @@ emplacement ; **Envoyer** le remplace. Ça ne marche que dans le navigateur qui 
 fait l'envoi ; pour les envois antérieurs à cette fonction, seule la vignette
 480×320 est retouchable.
 
+**Mode du dock** (fenêtre Album) : **Image fixe** (affiche l'emplacement 1) ou
+**Diaporama**, sans renvoyer d'image. Le dock ne permet pas de lire son mode :
+les boutons montrent le dernier mode envoyé depuis ce navigateur.
+
 **Autres actions** : **Diaporama…** (9 images max, mêmes réglages que
 l'éditeur), **×** pour vider un emplacement, **Tout effacer**, **Journal** des
 échanges sous l'écran. Mise en page adaptée au mobile.
@@ -68,6 +72,7 @@ python3 send.py --slot 2 photo.jpg               # remplace UNE image d'un loop 
 python3 send.py --slot 6 a.jpg b.jpg c.jpg       # remplit les slots 6, 7 et 8
 python3 send.py --clear 2 5                      # vide les slots 2 et 5
 python3 send.py --clear-all a.jpg b.jpg          # efface tout, puis envoie
+python3 send.py -m loop                          # bascule seulement le mode (fixed / loop)
 python3 send.py photo.jpg -f cover               # remplit l'écran en rognant
 python3 send.py logo.png -b "#ffffff" -r 90      # fond blanc, rotation horaire 90°
 python3 send.py img/ --save out/                 # prépare les JPEG sans envoyer (aperçu)
@@ -79,7 +84,7 @@ python3 send.py -h                               # aide complète
 | Option | Défaut | Rôle |
 |---|---|---|
 | `images…` | — | Fichiers image et/ou dossiers (contenu trié par nom). Formats : jpg, png, gif, bmp, webp, tiff, heic/heif |
-| `-m, --mode auto\|fixed\|loop` | `auto` | `auto` = `fixed` pour 1 image, `loop` sinon. `fixed` n'envoie que la 1re image, `loop` au plus 9 |
+| `-m, --mode auto\|fixed\|loop` | `auto` | `auto` = `fixed` pour 1 image, `loop` sinon. `fixed` n'envoie que la 1re image, `loop` au plus 9. Sans image : bascule seulement le mode |
 | `-s, --slot N` | — | Écrit dans le slot N (0‑8), puis N+1… si plusieurs images, **sans commande de mode** : les autres slots sont conservés. Incompatible avec `--mode` |
 | `--clear N [N…]` | — | Vide ces slots (commande `43`) |
 | `--clear-all` | — | Vide les slots 0 à 8 |
@@ -183,6 +188,11 @@ pour chaque image (slot 0,1,…) :
 Remplacement d'un slot (`--slot`) : même chose **sans** la commande `50`/`51`.
 
 Suppression (`--clear`) : `-> 43 [slot]   <- ACK`, une fois par slot.
+
+Changement de mode seul (`-m fixed|loop` sans image, boutons « Mode du dock » de
+l'interface) : `-> 50 / 51   <- ACK`. L'app officielle n'envoie jamais cette
+commande sans images derrière : que le dock bascule bien en gardant ses slots
+(et qu'en mode fixe il affiche le slot 0) reste **à confirmer** sur le matériel.
 
 ### Délai du mode loop
 

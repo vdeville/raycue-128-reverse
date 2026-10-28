@@ -6,6 +6,7 @@
   python3 send.py --slot 2 photo.jpg              # remplace juste le slot 2 (garde les autres)
   python3 send.py --clear 2 5                     # vide les slots 2 et 5
   python3 send.py --clear-all a.jpg b.jpg         # efface tout puis envoie
+  python3 send.py -m loop                         # bascule seulement le mode (fixed / loop)
   python3 send.py photo.jpg --fit cover           # remplit l'écran en rognant
   python3 send.py dossier/ --save out/            # prépare les JPEG sans rien envoyer
 """
@@ -154,8 +155,8 @@ def main():
 
     files = collect(a.images)
     clears = range(SLOTS) if a.clear_all else a.clear
-    if not files and not clears:
-        ap.error("donne au moins une image (ou --clear N / --clear-all)")
+    if not files and not clears and a.mode == "auto":
+        ap.error("donne au moins une image (ou --clear N / --clear-all / --mode fixed|loop)")
     if a.slot is not None and a.mode != "auto":
         ap.error("--slot n'envoie pas de commande de mode : incompatible avec --mode")
 
@@ -184,9 +185,9 @@ def main():
 
     dock = Dock(a.host, a.port, a.timeout, a.retries, a.delay)
     ok = all([dock.clear(n) for n in clears])
-    if imgs:
+    if imgs or a.mode != "auto":   # --mode seul : bascule le mode sans renvoyer d'image
         if mode:
-            print(f"{len(imgs)} image(s) -> mode {mode.upper()}")
+            print(f"mode {mode.upper()}" + (f" ({len(imgs)} image(s))" if imgs else ""))
             if not dock.mode(mode):
                 sys.exit("le dock ne répond pas (connecté à son Wi-Fi ?)")
         ok = all([dock.send(img, slot) for slot, img in enumerate(imgs, first)]) and ok
