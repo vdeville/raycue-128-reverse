@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RayCue 128K</title>
+<style>
+  /* Style « Macintosh 128K » (1984), comme le dock. Aucune ressource externe : le Wi-Fi du dock n'a pas Internet. */
+  :root {
+    --ink: #000; --paper: #fff; --beige: #e9e4d4; --beige-2: #d8d1bc; --beige-3: #bfb69c; --bezel: #3b3a36;
+    /* fond clair : les gris moyens (#808080-#9a9a96) scintillent sur certains écrans externes */
+    --desk: #dcdcdc; --empty: #d9d8d3; --ok: #1a7f37; --err: #c0281b;
+    --font: "ChicagoFLF", "Chicago", "Charcoal", Geneva, Verdana, system-ui, sans-serif;
+    --mono: Monaco, "Menlo", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--desk); }
+  body { margin: 0; min-height: 100vh; color: var(--ink); font: 13px/1.35 var(--font); }
+  body.busy, body.busy * { cursor: progress !important; }
+  button, select, input { font: inherit; color: inherit; }
+
+  /* Barre de menus */
+  .menubar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 2px; height: 30px;
+             padding: 0 10px; background: var(--paper); border-bottom: 2px solid var(--ink); overflow-x: auto; }
+  .menubar .brand { font-weight: 700; padding: 0 12px 0 4px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .menubar .brand i { flex: none; width: 18px; height: 14px; border: 2px solid var(--ink); border-radius: 3px; position: relative; }
+  .menubar .brand i::after { content: ""; position: absolute; left: 3px; right: 3px; top: 2px; height: 5px; background: var(--ink); }
+  .menu { background: none; border: 0; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+  .menu:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+  .menu:disabled { color: #999; cursor: default; }
+  .spacer { flex: 1; }
+  .status { display: flex; align-items: center; gap: 8px; padding: 0 6px; white-space: nowrap; }
+  .led { flex: none; width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--paper); }
+  .status.ok .led { background: var(--ok); }
+  .status.maybe .led { background: #f2b33d; }
+  .status.err .led { background: var(--err); }
+  @media (max-width: 640px) {
+    .menubar { padding: 0 4px; }
+    .menubar .brand span, #statusText, #mRecheck { display: none; }
+    .menu { padding: 5px 7px; }
+  }
+
+  /* Bureau : écran + journal à gauche, fenêtres à droite ; une seule colonne sur petit écran */
+  .desk { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); grid-template-areas: "mac side" "log side";
+          grid-template-rows: auto 1fr; gap: 0 28px; align-items: start; max-width: 1180px; margin: 0 auto; padding: 28px 16px 40px; }
+  .devicecol { grid-area: mac; }
+  .side { grid-area: side; min-width: 0; }
+  .logwin { grid-area: log; margin-top: 26px; }
+  @media (max-width: 1040px) {
+    .desk { grid-template-columns: minmax(0, 1fr); grid-template-areas: "mac" "side" "log"; grid-template-rows: auto;
+            max-width: 620px; padding-top: 18px; }
+    .side { margin-top: 22px; }
+    .logwin { margin-top: 0; }
+  }
+
+  /* Le boîtier */
+  .mac { width: 100%; max-width: 560px; margin: 0 auto; background: linear-gradient(180deg, var(--beige) 0%, var(--beige-2) 100%);
+         border: 2px solid #8f8670; border-radius: 22px 22px 14px 14px; padding: 32px 32px 20px;
+         box-shadow: inset 0 2px 0 #fbf8ee, inset 0 -6px 0 var(--beige-3), 6px 8px 0 rgba(0,0,0,.35); }
+  .bezel { background: var(--beige-2); border-radius: 14px; padding: 16px;
+           box-shadow: inset 3px 3px 0 var(--beige-3), inset -3px -3px 0 #f6f2e6; }
+  .crt { background: var(--bezel); border-radius: 10px; padding: 12px; box-shadow: inset 0 0 0 2px #1c1b19; }
+  @media (max-width: 520px) { .mac { padding: 14px 12px 12px; border-radius: 16px 16px 10px 10px; } .bezel { padding: 8px; } .crt { padding: 6px; }
+                              .chin { padding-top: 14px !important; } }
+  .screen { position: relative; aspect-ratio: 3 / 2; background: var(--paper); border-radius: 6px; overflow: hidden; touch-action: none; }
+  .screen canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  .screen canvas.pick { cursor: pointer; }
+  .screen canvas.drag { cursor: grabbing; }
+  .screen.over { outline: 4px dashed var(--ink); outline-offset: -8px; }
+  .screen .empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; padding: 10px; }
+  .screen .empty b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .screen::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: 6px;
+                   background: radial-gradient(ellipse at 50% 40%, transparent 60%, rgba(0,0,0,.18)); }
+  .chin { display: flex; align-items: flex-end; justify-content: space-between; padding: 24px 6px 0; }
+  .badge { font-size: 11px; letter-spacing: .08em; color: #6d6552; text-transform: uppercase; display: flex; gap: 8px; align-items: center; }
+  .badge::before { content: ""; width: 14px; height: 14px; border-radius: 3px;
+                   background: linear-gradient(#5ebd3e 0 17%, #ffb900 0 33%, #f78200 0 50%, #e23838 0 67%, #973999 0 83%, #009cdf 0); }
+  .floppy { width: 34%; height: 10px; border-radius: 3px; background: #a69d84; box-shadow: inset 0 3px 0 #7d755f; position: relative; margin-right: 18px; }
+  .floppy::after { content: ""; position: absolute; right: -16px; top: 1px; width: 8px; height: 8px; border-radius: 50%; background: #a69d84; }
+
+  /* Fenêtres façon System 1 */
+  .win { background: var(--paper); border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); margin-bottom: 22px; }
+  .title { position: relative; height: 24px; display: flex; align-items: center; justify-content: center; border-bottom: 2px solid var(--ink);
+           /* 3 traits pleins de 2 px : pas de trame fine, qui scintille sur certains écrans LCD */
+           background: linear-gradient(var(--ink) 0 2px, transparent 2px 6px, var(--ink) 6px 8px, transparent 8px 12px, var(--ink) 12px 14px)
+                       0 50% / 100% 14px no-repeat, var(--paper); }
+  .title span { background: var(--paper); padding: 0 10px; font-weight: 700; white-space: nowrap; }
+  .title .close { position: absolute; left: 10px; top: 5px; width: 13px; height: 13px; border: 2px solid var(--ink); background: var(--paper); }
+  .body { padding: 14px; }
+  .alert .body { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 14px; }
+  .alert .icon { width: 44px; height: 44px; border: 2px solid var(--ink); border-radius: 50%; display: grid; place-items: center;
+                 font-size: 26px; font-weight: 700; }
+  .alert p { margin: 0 0 8px; }
+  .kv { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .kv div { border: 2px solid var(--ink); padding: 4px 10px; }
+  .kv small { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .kv code { font: 700 16px var(--mono); }
+  @media (max-width: 420px) { .alert .body { grid-template-columns: minmax(0, 1fr); } .alert .icon { display: none; } }
+
+  .btn { background: var(--paper); border: 2px solid var(--ink); border-radius: 8px; padding: 4px 12px; cursor: pointer; min-height: 30px; }
+  .btn:active:not(:disabled), .btn.on { background: var(--ink); color: var(--paper); }
+  .btn.default { box-shadow: 0 0 0 2px var(--paper), 0 0 0 5px var(--ink); margin: 3px; }
+  .btn:disabled { color: #999; border-color: #999; cursor: default; box-shadow: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .sep { height: 0; border-top: 2px solid var(--ink); margin: 14px 0; }
+  .ctl { display: grid; grid-template-columns: 92px minmax(0, 1fr) 46px; gap: 8px; align-items: center; margin-top: 8px; }
+  .ctl output { font-family: var(--mono); font-size: 12px; text-align: right; }
+  @media (max-width: 420px) { .ctl { grid-template-columns: 76px minmax(0, 1fr) 42px; } }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 12px; margin: 6px 0; background: var(--empty); border: 2px solid var(--ink); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 22px; background: var(--paper); border: 2px solid var(--ink); }
+  input[type=range]::-moz-range-thumb { width: 12px; height: 20px; border-radius: 0; background: var(--paper); border: 2px solid var(--ink); }
+  input[type=color] { width: 44px; height: 30px; padding: 2px; border: 2px solid var(--ink); background: var(--paper); }
+  select { border: 2px solid var(--ink); background: var(--paper); padding: 3px 6px; border-radius: 0; box-shadow: 2px 2px 0 var(--ink); }
+  .hint { font-size: 12px; color: #444; margin: 8px 0 0; }
+
+  /* Album : 9 emplacements */
+  .album { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 460px) { .album { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .slot { position: relative; min-width: 0; border: 2px solid var(--ink); background: var(--paper); cursor: pointer; padding: 0; text-align: left; }
+  .slot .pic { aspect-ratio: 3 / 2; background: var(--empty); display: block; width: 100%; object-fit: cover; }
+  .slot .cap { display: block; padding: 2px 6px; border-top: 2px solid var(--ink); font-size: 11px;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot.sel { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--ink); }
+  .slot.sel .cap { background: var(--ink); color: var(--paper); }
+  .slot.over { outline: 3px dashed var(--ink); outline-offset: 3px; }
+  .slot .n { position: absolute; top: 4px; left: 4px; background: var(--paper); border: 2px solid var(--ink); padding: 0 5px; font-size: 11px; font-weight: 700; }
+  .slot .acts { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
+  .slot .act { height: 22px; min-width: 22px; padding: 0 6px; line-height: 18px; text-align: center; font-size: 11px; font-weight: 700;
+               border: 2px solid var(--ink); background: var(--paper); }
+  .slot .act:hover { background: var(--ink); color: var(--paper); }
+
+  pre { margin: 0; max-height: 180px; overflow: auto; font: 11px/1.4 var(--mono); white-space: pre-wrap; }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 160%); transition: transform .2s steps(4);
+           background: var(--paper); border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); padding: 10px 16px;
+           max-width: calc(100% - 32px); font-weight: 700; z-index: 20; }
+  .toast.show { transform: translate(-50%, 0); }
+  .toast.err { background: var(--ink); color: var(--paper); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<nav class="menubar">
+  <span class="brand"><i></i><span>RayCue 128K</span></span>
+  <button class="menu" id="mOpen">Ouvrir…</button>
+  <button class="menu" id="mLoop">Diaporama…</button>
+  <button class="menu" id="mClearAll">Tout effacer</button>
+  <span class="spacer"></span>
+  <span class="status" id="status"><span class="led"></span><span id="statusText">Vérification…</span></span>
+  <button class="menu" id="mRecheck">Revérifier</button>
+</nav>
+
+<main class="desk">
+  <section class="devicecol">
+    <div class="mac">
+      <div class="bezel"><div class="crt">
+        <div class="screen" id="screen">
+          <canvas id="canvas" width="480" height="320"></canvas>
+          <div class="empty" id="empty"><div><b>Clique pour choisir une photo</b>ou glisse-la ici</div></div>
+        </div>
+      </div></div>
+      <div class="chin"><span class="badge">RayCue&nbsp;128K</span><span class="floppy"></span></div>
+    </div>
+  </section>
+
+  <div class="win logwin">
+    <div class="title"><i class="close"></i><span>Journal</span></div>
+    <div class="body"><pre id="log">—</pre></div>
+  </div>
+
+  <section class="side">
+    <div class="win alert" id="alert" hidden>
+      <div class="title"><i class="close"></i><span>Dock injoignable</span></div>
+      <div class="body">
+        <div class="icon">!</div>
+        <div>
+          <p>Connecte cet ordinateur au Wi‑Fi du dock, puis clique sur « Revérifier ».</p>
+          <div class="kv">
+            <div><small>Réseau</small><code id="ssid">Raycue 128K</code></div>
+            <div><small>Mot de passe</small><code id="pwd">12345678</code></div>
+          </div>
+          <div class="row">
+            <button class="btn" id="copyPwd">Copier le mot de passe</button>
+            <button class="btn default" id="recheck">Revérifier</button>
+          </div>
+          <p class="hint" id="alertHint"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="win">
+      <div class="title"><i class="close"></i><span id="editTitle">Retouche</span></div>
+      <div class="body">
+        <div class="row">
+          <button class="btn on" data-fit="contain" title="Image entière, bandes de la couleur du fond">Ajuster</button>
+          <button class="btn" data-fit="cover" title="Remplit l'écran en rognant">Remplir</button>
+          <button class="btn" id="rotL" title="Rotation 90° anti-horaire">↺ 90°</button>
+          <button class="btn" id="rotR" title="Rotation 90° horaire">↻ 90°</button>
+          <button class="btn" id="flip" title="Miroir horizontal">↔ Miroir</button>
+          <button class="btn" id="reset">Réinitialiser</button>
+        </div>
+        <div class="ctl"><label for="zoom">Zoom</label><input type="range" id="zoom" min="20" max="400" value="100"><output id="zoomV">100 %</output></div>
+        <div class="ctl"><label for="bright">Luminosité</label><input type="range" id="bright" min="30" max="200" value="100"><output id="brightV">100 %</output></div>
+        <div class="ctl"><label for="contrast">Contraste</label><input type="range" id="contrast" min="30" max="200" value="100"><output id="contrastV">100 %</output></div>
+        <div class="ctl"><label for="sat">Saturation</label><input type="range" id="sat" min="0" max="200" value="100"><output id="satV">100 %</output></div>
+        <div class="ctl"><label for="quality">Qualité JPEG</label><input type="range" id="quality" min="40" max="95" value="90"><output id="qualityV">90</output></div>
+        <div class="row" style="margin-top:10px"><label for="bg">Fond</label><input type="color" id="bg" value="#000000">
+          <span class="hint" style="margin:0">visible dans les bandes (Ajuster), en dézoomant ou sous la transparence — pas en Remplir</span></div>
+        <p class="hint">Sur l'écran : glisser pour déplacer · molette pour zoomer · double-clic pour recentrer</p>
+        <div class="sep"></div>
+        <div class="row">
+          <label for="target">Emplacement</label>
+          <select id="target"></select>
+          <button class="btn default" id="sendSlot" disabled>Envoyer</button>
+          <button class="btn" id="sendFixed" disabled title="Passe le dock en mode image fixe avec cette image">Image fixe</button>
+        </div>
+        <p class="hint">« Envoyer » remplace l'emplacement sans toucher aux autres. « Image fixe » affiche cette seule image en continu.</p>
+      </div>
+    </div>
+
+    <div class="win">
+      <div class="title"><i class="close"></i><span>Album — 9 emplacements</span></div>
+      <div class="body">
+        <div class="album" id="album"></div>
+        <p class="hint">Clic : choisir l'emplacement · « Éditer » : reprendre la retouche · glisser une image dessus : l'ouvrir pour cet
+          emplacement. Le dock ne permet pas de relire ses images : l'album montre ce qui a été envoyé depuis ce navigateur.</p>
+      </div>
+    </div>
+  </section>
+</main>
+<input type="file" id="file" accept="image/*,.heic,.heif" hidden>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const W = 480, H = 320;
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+// Images d'origine par emplacement (trop grosses pour localStorage). Toute erreur (navigation privée…) est ignorée.
+const originals = (() => {
+  let db;
+  const open = () => db ??= new Promise((ok, ko) => {
+    const r = indexedDB.open("raycue", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("src");
+    r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error);
+  });
+  const tx = async (mode, fn) => {
+    try {
+      const t = (await open()).transaction("src", mode), q = fn(t.objectStore("src"));
+      return await new Promise(ok => { t.oncomplete = () => ok(q.result); t.onerror = t.onabort = () => ok(undefined); });
+    } catch { return undefined; }
+  };
+  return { get: k => tx("readonly", s => s.get(k)), set: (k, v) => tx("readwrite", s => s.put(v, k)),
+           del: k => tx("readwrite", s => s.delete(k)), clear: () => tx("readwrite", s => s.clear()) };
+})();
+
+let SLOTS = 9, slots = store.get("slots", {}), target = 0;   // slots[i] = { img: vignette JPEG, name, st }
+let confirmed = false, failed = false;                       // ACK reçu dans la session / dernier échange raté
+
+/* ---------- Utilitaires ---------- */
+function toast(msg, err) {
+  const t = $("toast"); t.textContent = msg; t.className = "toast show" + (err ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = "toast", 3500);
+}
+function log(text) {
+  if (!text) return;
+  const l = $("log"); if (l.textContent === "—") l.textContent = "";
+  l.textContent += text; l.scrollTop = 1e9;
+}
+function busy(on) {
+  document.body.classList.toggle("busy", on);
+  document.querySelectorAll(".menu, .btn, .slot").forEach(b => b.disabled = on);
+  if (!on) render();
+}
+async function api(path, params, body) {
+  const j = await (await fetch(`${path}?${new URLSearchParams(params)}`, { method: "POST", body })).json();
+  log(j.log);
+  if (j.error) throw new Error(j.error);
+  return j;
+}
+function pick(cb, multiple) {
+  const f = $("file"); f.multiple = !!multiple; f.value = "";
+  f.onchange = () => f.files.length && cb(multiple ? [...f.files] : f.files[0]);
+  f.click();
+}
+function dropZone(el, onFile) {
+  el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("over"); });
+  el.addEventListener("dragleave", () => el.classList.remove("over"));
+  el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("over"); e.dataTransfer.files[0] && onFile(e.dataTransfer.files[0]); });
+}
+
+/* ---------- État du dock ---------- */
+let lastStatus = "";
+async function checkStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    SLOTS = s.slots;
+    if ($("pwd").textContent !== s.password) { $("ssid").textContent = s.ssid; $("pwd").textContent = s.password; }
+    if (failed) return setStatus(false, "Le dernier envoi a échoué : le dock ne répond pas.");
+    setStatus(s.reachable, s.reachable ? "" : `Cet ordinateur n'a pas d'adresse sur le réseau du dock (${s.host}).`);
+  } catch { setStatus(false, "Le serveur local ne répond plus : relance gui/app.py."); }
+}
+function setStatus(ok, hint) {
+  // Sans ACK on sait seulement qu'on est en 192.168.0.x : une box peut utiliser la même plage.
+  const text = !ok ? "Dock injoignable" : confirmed ? "Dock joignable" : "Réseau OK — dock non confirmé";
+  if (lastStatus === (lastStatus = text + "|" + hint)) return;   // pas de repeint inutile toutes les 5 s
+  $("status").className = "status " + (!ok ? "err" : confirmed ? "ok" : "maybe");
+  $("statusText").textContent = text;
+  $("status").title = text + (ok && !confirmed ? " : il sera confirmé au premier envoi (il ne peut pas être sondé sans rien modifier)." : "");
+  $("alert").hidden = ok; $("alertHint").textContent = hint;
+}
+async function run(label, fn) {
+  busy(true);
+  try { await fn(); failed = false; confirmed = true; toast(label); }
+  catch (e) { failed = true; confirmed = false; toast(e.message, true); log("!! " + e.message + "\n"); }
+  finally { busy(false); renderAlbum(); checkStatus(); }
+}
+
+/* ---------- Éditeur : l'écran du dock en 480×320, ce qu'on voit est exactement ce qui part ---------- */
+// st = tout ce qui définit le rendu d'une image ; sauvegardé tel quel avec l'emplacement pour reprendre la retouche.
+const FRESH = () => ({ fit: store.get("fit", "contain"), bg: store.get("bg", "#000000"), zoom: 1, dx: 0, dy: 0,
+                       rot: 0, flip: false, bright: 100, contrast: 100, sat: 100 });
+const cv = $("canvas");
+let img = null, src = null, name = "", st = FRESH();   // src = fichier d'origine
+
+function draw(c, bmp, s) {
+  const g = c.getContext("2d");
+  g.save();
+  g.fillStyle = s.bg; g.fillRect(0, 0, W, H);
+  const [iw, ih] = s.rot % 180 ? [bmp.height, bmp.width] : [bmp.width, bmp.height];
+  const k = (s.fit === "cover" ? Math.max(W / iw, H / ih) : Math.min(W / iw, H / ih)) * s.zoom;
+  g.filter = `brightness(${s.bright}%) contrast(${s.contrast}%) saturate(${s.sat}%)`;
+  g.imageSmoothingQuality = "high";
+  g.translate(W / 2 + s.dx, H / 2 + s.dy);
+  g.rotate(s.rot * Math.PI / 180);
+  g.scale(s.flip ? -k : k, k);
+  g.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
+  g.restore();
+}
+function render() {
+  $("empty").hidden = !!img;
+  cv.classList.toggle("pick", !img);
+  if (img) draw(cv, img, st);
+  else { const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); }
+  $("zoom").value = Math.round(st.zoom * 100); $("zoomV").textContent = $("zoom").value + " %";
+  for (const id of ["bright", "contrast", "sat"]) { $(id).value = st[id]; $(id + "V").textContent = st[id] + " %"; }
+  $("bg").value = st.bg;
+  $("editTitle").textContent = img ? `Retouche → emplacement ${target + 1}` : "Retouche";
+  $("qualityV").textContent = $("quality").value;
+  document.querySelectorAll("[data-fit]").forEach(b => b.classList.toggle("on", b.dataset.fit === st.fit));
+  $("sendSlot").disabled = $("sendFixed").disabled = !img || document.body.classList.contains("busy");
+}
+const set = patch => { Object.assign(st, patch); render(); };
+
+async function decode(blob) {
+  try { return await createImageBitmap(blob); }            // orientation EXIF appliquée par le navigateur
+  catch {                                                   // HEIC hors Safari, TIFF… : décodé par le serveur
+    const r = await fetch("/api/decode", { method: "POST", body: blob });
+    if (!r.ok) throw new Error((await r.json()).error || "image illisible");
+    return createImageBitmap(await r.blob());
+  }
+}
+async function load(blob, label, state) {
+  img = await decode(blob); src = blob; name = label; st = state; render();
+}
+async function openImage(file, slot) {
+  try { await load(file, file.name, FRESH()); if (slot !== undefined) selectSlot(slot); }
+  catch (e) { toast(`${file.name} : ${e.message}`, true); }
+}
+async function editSlot(i) {
+  const s = slots[i];
+  try {   // sans original stocké (ancien envoi), on retouche la vignette 480×320
+    await load(await originals.get(i) ?? await (await fetch(s.img)).blob(), s.name, { ...FRESH(), fit: "contain", ...s.st, ...s.adj });
+    selectSlot(i); toast(`Emplacement ${i + 1} dans l'éditeur`);
+  } catch (e) { toast(`Emplacement ${i + 1} : ${e.message}`, true); }
+}
+
+// Écran vide : clic = choisir une photo. Avec une image : glisser pour déplacer, molette pour zoomer, double-clic pour recentrer.
+let drag = null;
+cv.addEventListener("pointerdown", e => {
+  if (!img) return pick(f => openImage(f));
+  drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); cv.classList.add("drag");
+});
+cv.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const k = W / cv.getBoundingClientRect().width;
+  set({ dx: st.dx + (e.clientX - drag.x) * k, dy: st.dy + (e.clientY - drag.y) * k }); drag = { x: e.clientX, y: e.clientY };
+});
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, () => { drag = null; cv.classList.remove("drag"); });
+cv.addEventListener("wheel", e => {
+  if (!img) return; e.preventDefault();
+  set({ zoom: Math.min(4, Math.max(.2, st.zoom * Math.exp(-e.deltaY * .0015))) });
+}, { passive: false });
+cv.addEventListener("dblclick", () => img && set({ zoom: 1, dx: 0, dy: 0 }));
+dropZone($("screen"), f => openImage(f));
+
+document.querySelectorAll("[data-fit]").forEach(b => b.onclick = () => { store.set("fit", b.dataset.fit); set({ fit: b.dataset.fit, zoom: 1, dx: 0, dy: 0 }); });
+$("rotL").onclick = () => set({ rot: (st.rot + 270) % 360 });
+$("rotR").onclick = () => set({ rot: (st.rot + 90) % 360 });
+$("flip").onclick = () => set({ flip: !st.flip });
+$("reset").onclick = () => set(FRESH());
+$("zoom").oninput = () => set({ zoom: $("zoom").value / 100 });
+for (const id of ["bright", "contrast", "sat"]) $(id).oninput = () => set({ [id]: +$(id).value });
+$("bg").oninput = () => { store.set("bg", $("bg").value); set({ bg: $("bg").value }); };
+$("quality").value = store.get("quality", 90);
+$("quality").oninput = () => { store.set("quality", $("quality").value); render(); };
+
+/* ---------- Envoi ---------- */
+async function upload(slot, canvas, label, mode, original, state) {
+  const png = await new Promise(r => canvas.toBlob(r, "image/png"));   // sans perte : le serveur encode le JPEG une seule fois
+  const j = await api("/api/image", { slot, mode, quality: $("quality").value }, png);
+  slots[slot] = { img: "data:image/jpeg;base64," + j.jpeg, name: label, st: { ...state } };
+  store.set("slots", slots);
+  await originals.set(slot, original);
+  if (!j.ok) throw new Error(`emplacement ${slot + 1} : le dock n'a pas tout acquitté`);
+}
+$("sendSlot").onclick = () => run(`Emplacement ${target + 1} envoyé`, () => upload(target, cv, name, "", src, st));
+$("sendFixed").onclick = () => run("Image fixe affichée", () => upload(0, cv, name, "fixed", src, st));
+
+$("mOpen").onclick = () => pick(f => openImage(f));
+$("mLoop").onclick = () => pick(files => run(`Diaporama de ${Math.min(files.length, SLOTS)} image(s) envoyé`, async () => {
+  if (files.length > SLOTS) toast(`${files.length} images : seules les ${SLOTS} premières sont envoyées`);
+  const c = document.createElement("canvas"); c.width = W; c.height = H;
+  const s = { ...st, zoom: 1, dx: 0, dy: 0, rot: 0, flip: false };   // cadrage et réglages de l'éditeur, sans zoom ni déplacement
+  for (const [i, f] of files.slice(0, SLOTS).entries()) {
+    draw(c, await decode(f), s);
+    await upload(i, c, f.name, i ? "" : "loop", f, s);
+  }
+}), true);
+
+async function clear(slot) {
+  const all = slot === undefined;
+  await run(all ? "Tous les emplacements vidés" : `Emplacement ${slot + 1} vidé`, async () => {
+    const j = await api("/api/clear", { slot: all ? "all" : slot });
+    if (!j.ok) throw new Error("le dock n'a pas acquitté la suppression");
+    if (all) { slots = {}; await originals.clear(); } else { delete slots[slot]; await originals.del(slot); }
+    store.set("slots", slots);
+  });
+}
+$("mClearAll").onclick = () => clear();
+
+/* ---------- Album ---------- */
+function selectSlot(i) { target = i; renderAlbum(); render(); }
+function renderAlbum() {
+  $("target").innerHTML = Array.from({ length: SLOTS }, (_, i) => `<option value="${i}">${i + 1}</option>`).join("");
+  $("target").value = target;
+  $("album").replaceChildren(...Array.from({ length: SLOTS }, (_, i) => {
+    const s = slots[i], el = document.createElement("button");
+    el.className = "slot" + (i === target ? " sel" : "");
+    el.innerHTML = `<img class="pic" alt=""><span class="n">${i + 1}</span><span class="cap"></span>` + (s ?
+      `<span class="acts"><span class="act" data-act="edit" title="Reprendre la retouche">Éditer</span>` +
+      `<span class="act" data-act="clear" title="Vider l'emplacement">×</span></span>` : "");
+    if (s) el.querySelector(".pic").src = s.img;
+    el.querySelector(".cap").textContent = s ? s.name : "vide";
+    el.onclick = e => ({ edit: () => editSlot(i), clear: () => clear(i) })[e.target.dataset.act]?.() ?? selectSlot(i);
+    dropZone(el, f => openImage(f, i));
+    return el;
+  }));
+}
+$("target").onchange = () => selectSlot(+$("target").value);
+
+$("mRecheck").onclick = $("recheck").onclick = () => { failed = false; checkStatus(); };
+$("copyPwd").onclick = async () => {
+  try { await navigator.clipboard.writeText($("pwd").textContent); toast("Mot de passe copié"); }
+  catch { toast("Copie impossible : " + $("pwd").textContent, true); }
+};
+for (const ev of ["dragover", "drop"]) document.addEventListener(ev, e => e.preventDefault());   // un fichier lâché à côté ne remplace pas la page
+
+checkStatus().then(() => { renderAlbum(); render(); });
+setInterval(checkStatus, 5000);
+</script>
+</body>
+</html>
